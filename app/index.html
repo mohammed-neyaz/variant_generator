@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Variant Generator</title>
+    <!-- Remove the JWT library, we only need Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loading-wheel {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #a3e635;
+            border-top: 4px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+
+<body class="bg-stone-900 text-stone-100">
+    <div class="mx-auto px-4 pb-8 pt-20 lg:pt-8 min-h-screen">
+        <!-- Rest of your content div remains the same -->
+        <h1 class="text-4xl font-bold text-lime-400 mb-4 text-center">Image Variant Generator</h1>
+        <hr class="my-6 border-t border-stone-700 min-w-screen -mx-4">
+        
+        <!-- Status Message -->
+        <div id="statusMessage" class="text-center mb-8 text-stone-300">
+            Waiting for image URL...
+        </div>
+
+        <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 pt-4">
+            <!-- Left Column -->
+            <div class="space-y-6 col-span-1">
+                <!-- Preview Section -->
+                <div id="previewSection" class="hidden">
+                    <h2 class="text-2xl font-semibold text-stone-100 mb-4">Original Image</h2>
+                    <div class="bg-stone-800 p-4 rounded-lg shadow-md">
+                        <img id="imagePreview" src="" alt="Image preview" class="max-w-full mx-auto">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="space-y-6 col-span-2">
+                <!-- Prompt Section -->
+                <div id="promptSection" class="hidden">
+                    <h2 class="text-2xl font-semibold text-stone-100 mb-4">Generated Prompt</h2>
+                    <div class="bg-stone-800 p-4 rounded-lg shadow-md">
+                        <p id="generatedPrompt" class="text-stone-300"></p>
+                    </div>
+                </div>
+
+                <!-- Variants Section -->
+                <div id="variantsSection" class="hidden flex flex-col item-center">
+                    <h2 class="text-2xl font-semibold text-stone-100 mb-4">Generated Variants</h2>
+                    <div id="variantsGrid" class="grid grid-cols-1 sm:grid-cols-4 gap-4"></div>
+                </div>
+
+                <!-- Loading Indicator -->
+                <div id="loadingIndicator" class="hidden flex flex-col items-center justify-center space-y-4 mt-4">
+                    <div class="loading-wheel"></div>
+                    <p class="text-stone-300">Processing your request... (<span id="timerDisplay">00:00</span>)</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize auth token in sessionStorage for better persistence
+        let authToken = sessionStorage.getItem('authToken');
+        let isReady = false;
+    
+        // Initialize the generator after DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set ready state and notify parent immediately
+            isReady = true;
+            window.parent.postMessage({ type: 'GENERATOR_READY' }, '*');
+    
+            // Listen for postMessage events
+            window.addEventListener('message', async function(event) {
+                // Verify origin
+                const allowedOrigins = ['http://localhost:8000', 'http://127.0.0.1:5501'];
+                if (!allowedOrigins.includes(event.origin)) {
+                    console.error('Unauthorized origin:', event.origin);
+                    return;
+                }
+    
+                // Handle JWT message
+                if (event.data.type === 'jwt') {
+                    authToken = event.data.token;
+                    sessionStorage.setItem('authToken', authToken);
+                    window.parent.postMessage({ 
+                        type: 'AUTH_SUCCESS',
+                        message: 'JWT received and stored'
+                    }, event.origin);
+                    document.getElementById('statusMessage').textContent = 'Authenticated and ready...';
+                    return;
+                }
+    
+                // Check authentication before processing image variants
+                if (event.data.type === 'generateVariants' && event.data.imageUrl) {
+                    if (!authToken) {
+                        window.parent.postMessage({ 
+                            type: 'AUTH_ERROR',
+                            message: 'No authentication token present'
+                        }, event.origin);
+                        return;
+                    }
+    
+                    const imageUrl = event.data.imageUrl;
+                    document.getElementById('statusMessage').textContent = 'Processing image...';
+                    document.getElementById('loadingIndicator').classList.remove('hidden');
+    
+                    try {
+                        // Generate prompt from URL with JWT
+                        const promptResponse = await fetch('/generate-prompt-from-url', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${authToken}`
+                            },
+                            body: JSON.stringify({ image_url: imageUrl })
+                        });
+    
+                        if (promptResponse.status === 401) {
+                            throw new Error('Authentication expired');
+                        }
+    
+                        if (!promptResponse.ok) throw new Error('Failed to generate prompt');
+                        const promptData = await promptResponse.json();
+    
+                        // Show preview and prompt sections
+                        document.getElementById('imagePreview').src = imageUrl;
+                        document.getElementById('previewSection').classList.remove('hidden');
+    
+                        // Show prompt
+                        document.getElementById('generatedPrompt').textContent = promptData.prompt;
+                        document.getElementById('promptSection').classList.remove('hidden');
+    
+                        // Generate variants with JWT
+                        const variantsResponse = await fetch('/generate-variants', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${authToken}`
+                            },
+                            body: JSON.stringify({ prompt: promptData.prompt })
+                        });
+    
+                        if (variantsResponse.status === 401) {
+                            throw new Error('Authentication expired');
+                        }
+    
+                        if (!variantsResponse.ok) throw new Error('Failed to generate variants');
+                        const variantsData = await variantsResponse.json();
+    
+                        // Display variants
+                        const variantsGrid = document.getElementById('variantsGrid');
+                        variantsGrid.innerHTML = '';
+                        const processedVariants = variantsData.images.map(image => {
+                            const imgElement = document.createElement('img');
+                            // Ensure the URL is properly formatted
+                            const imageUrl = image.url.startsWith('/getfiles') 
+                                ? `http://localhost:8000${image.url}`
+                                : image.url;
+                            imgElement.src = imageUrl;
+                            imgElement.className = 'w-full rounded-lg shadow-md';
+                            variantsGrid.appendChild(imgElement);
+                            return { ...image, url: imageUrl };
+                        });
+                        document.getElementById('variantsSection').classList.remove('hidden');
+    
+                        // Send completion message back to parent with processed URLs
+                        window.parent.postMessage({ 
+                            type: 'variantsGenerated',
+                            success: true,
+                            variants: processedVariants,
+                            status: variantsData.status
+                        }, event.origin);
+    
+                        // Update status
+                        document.getElementById('statusMessage').textContent = 'Generation complete!';
+                    } catch (error) {
+                        console.error('Error:', error);
+                        if (error.message === 'Authentication expired') {
+                            window.parent.postMessage({ 
+                                type: 'AUTH_EXPIRED',
+                                message: 'Authentication token has expired'
+                            }, event.origin);
+                        } else {
+                            window.parent.postMessage({ 
+                                type: 'variantsGenerated',
+                                success: false,
+                                error: error.message
+                            }, event.origin);
+                        }
+                        document.getElementById('statusMessage').textContent = 'Error: ' + error.message;
+                    } finally {
+                        document.getElementById('loadingIndicator').classList.add('hidden');
+                    }
+                }
+            });
+            
+            // Notify parent if they try to access before ready
+            if (!isReady) {
+                window.parent.postMessage({ type: 'NOT_READY' }, '*');
+            }
+        });
+    </script>
+</body>
+</html>
