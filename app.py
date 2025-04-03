@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize FastAPI app
 app = FastAPI()
